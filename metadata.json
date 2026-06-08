@@ -1,0 +1,6 @@
+{
+  "name": "Poliglotta PDF",
+  "description": "Lettore PDF intelligente e assistente di studio multilingue. Carica file, estrai il testo e traduci o analizza la grammatica con l'aiuto dell'intelligenza artificiale.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
