@@ -158,28 +158,41 @@ export default function App() {
     }, 4000);
   };
 
-  // Initialization: Load PDF list from localStorage, otherwise combine with fallback
+  // Initialization: Load PDF list and merge with folder glob
   useEffect(() => {
     const loadInitialState = async () => {
+      // 1. Get files physically present in the public/pdfs/ folder at compile/build time
+      const publicPdfsFromGlob = GLOB_PDFS.length > 0 ? GLOB_PDFS : DEFAULT_SAMPLES;
+
+      // 2. Get saved metadata from localStorage (mainly for user custom file-picker library)
       const savedList = localStorage.getItem("lingua_read_pdf_meta_list");
-      let loadedPdfs: PDFAttachment[] = [];
-      
+      let savedPdfs: PDFAttachment[] = [];
       if (savedList) {
         try {
-          loadedPdfs = JSON.parse(savedList);
+          savedPdfs = JSON.parse(savedList);
         } catch (e) {
-          loadedPdfs = [];
+          savedPdfs = [];
         }
-      } else {
-        // First starting: integrate any glob PDFs, otherwise samples
-        loadedPdfs = GLOB_PDFS.length > 0 ? GLOB_PDFS : DEFAULT_SAMPLES;
-        localStorage.setItem("lingua_read_pdf_meta_list", JSON.stringify(loadedPdfs));
       }
+
+      // 3. Keep only the user-custom physically imported files from the saved list
+      const customLocalPdfs = savedPdfs.filter(p => p.isCustom);
+
+      // 4. Merge the custom local uploads with the automatic folder files
+      // This guarantees that any changes in public/pdfs/* at build time are reflected IMMEDIATELY without typing!
+      const mergedList = [...customLocalPdfs, ...publicPdfsFromGlob];
+
+      // Remove any item with duplicate names
+      const uniqueMap = new Map<string, PDFAttachment>();
+      mergedList.forEach(p => {
+        uniqueMap.set(p.name, p);
+      });
+      const deduplicatedList = Array.from(uniqueMap.values());
 
       // Re-create Blob URLs for any custom offline database-backed PDFs
       const hydratedPdfs = await Promise.all(
-        loadedPdfs.map(async (p) => {
-          if (p.isCustom && !p.url.startsWith("blob:")) {
+        deduplicatedList.map(async (p) => {
+          if (p.isCustom && (!p.url || !p.url.startsWith("blob:"))) {
             try {
               const fileBlob = await getPDFFromDB(p.name);
               if (fileBlob) {
@@ -197,6 +210,7 @@ export default function App() {
       );
 
       setPdfs(hydratedPdfs);
+      persistPdfMetaList(hydratedPdfs); // update local storage cache safely
 
       if (hydratedPdfs.length > 0) {
         handleLoadPDF(hydratedPdfs[0]);
@@ -606,6 +620,50 @@ export default function App() {
                     if (e.key === "Enter") handleConnectPublicPdf();
                   }}
                 />
+
+                {/* Discovered files list inside public/pdfs folder so user doesn't have to remember filenames */}
+                {GLOB_PDFS.length > 0 && (
+                  <div className="pt-1.5 pb-0.5">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                      File rilevati nella cartella (Clicca per inserire):
+                    </p>
+                    <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto pr-1">
+                      {GLOB_PDFS.map((g) => (
+                        <button
+                          key={g.name}
+                          onClick={() => {
+                            setConnectFileName(g.name);
+                            // Auto trigger connection
+                            setTimeout(() => {
+                              const newPdf: PDFAttachment = {
+                                name: g.name,
+                                size: 0,
+                                url: `/pdfs/${g.name}`,
+                                isFromPublicPdfs: true
+                              };
+                              setPdfs(prev => {
+                                const updated = [newPdf, ...prev.filter(p => p.name !== g.name)];
+                                persistPdfMetaList(updated);
+                                return updated;
+                              });
+                              setActivePdf(newPdf);
+                              setCurrentPage(1);
+                              setExtractedLines([]);
+                              setShowConnectModal(false);
+                              setConnectFileName("");
+                              setTimeout(() => handleLoadPDF(newPdf), 150);
+                              showToast(`File "${g.name}" caricato con successo!`);
+                            }, 50);
+                          }}
+                          className="w-full text-left px-3 py-2 bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-800 font-medium text-[11px] rounded-lg transition-all border border-slate-200 hover:border-blue-200 cursor-pointer flex items-center justify-between gap-2"
+                        >
+                          <span className="truncate">📄 {g.name}</span>
+                          <span className="text-[9px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded font-bold uppercase shrink-0">Apri</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 pt-2">
                   <button
