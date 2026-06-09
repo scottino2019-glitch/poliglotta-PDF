@@ -14,8 +14,6 @@ import {
   Download,
   Copy,
   Plus,
-  Compass,
-  ArrowRight,
   Sparkles,
   Info
 } from "lucide-react";
@@ -25,23 +23,41 @@ interface PDFAttachment {
   name: string;
   size: number;
   url: string;
+  isCustom?: boolean;
 }
+
+const INITIAL_PDFS: PDFAttachment[] = [
+  {
+    name: "Chinese_Beginners_Grammar.pdf",
+    size: 110480,
+    url: "/pdfs/Chinese_Beginners_Grammar.pdf"
+  },
+  {
+    name: "Frasi_Utili_Giapponese.pdf",
+    size: 94810,
+    url: "/pdfs/Frasi_Utili_Giapponese.pdf"
+  },
+  {
+    name: "French_Travel_Conversation.pdf",
+    size: 165200,
+    url: "/pdfs/French_Travel_Conversation.pdf"
+  }
+];
 
 export default function App() {
   // State
-  const [pdfs, setPdfs] = useState<PDFAttachment[]>([]);
+  const [pdfs, setPdfs] = useState<PDFAttachment[]>(INITIAL_PDFS);
   const [activePdf, setActivePdf] = useState<PDFAttachment | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(0);
   const [loadingPdf, setLoadingPdf] = useState<boolean>(false);
-  const [loadingPdfsList, setLoadingPdfsList] = useState<boolean>(false);
   const [uploadingPdf, setUploadingPdf] = useState<boolean>(false);
   
-  // Cornell Class / General Notes state
+  // Notebook/study state
   const [studyNotes, setStudyNotes] = useState<string>("");
   const [noteWords, setNoteWords] = useState<number>(0);
 
-  // Extracted PDF text for easy clicking/highlights
+  // Extracted PDF text for clicking/copying
   const [extractedLines, setExtractedLines] = useState<string[]>([]);
   const [extractingText, setExtractingText] = useState<boolean>(false);
 
@@ -52,7 +68,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Helper for status notice
+  // Helper for toast
   const showToast = (text: string, isError = false) => {
     setToastMsg({ text, isError });
     setTimeout(() => {
@@ -60,30 +76,13 @@ export default function App() {
     }, 4000);
   };
 
-  // 1. Fetch PDF list from local folder
-  const fetchPdfs = async (autoSelectFirst = false) => {
-    try {
-      setLoadingPdfsList(true);
-      const res = await fetch("/api/pdfs");
-      if (!res.ok) throw new Error("Failed to get pdf list");
-      const list: PDFAttachment[] = await res.json();
-      setPdfs(list);
-      
-      if (autoSelectFirst && list.length > 0 && !activePdf) {
-        handleLoadPDF(list[0]);
-      }
-    } catch (err: any) {
-      console.error(err);
-      showToast("Errore nel caricamento della cartella PDF locale.", true);
-    } finally {
-      setLoadingPdfsList(false);
-    }
-  };
-
   useEffect(() => {
-    fetchPdfs(true);
+    // Carica il primo PDF memorizzato per iniziare subito
+    if (INITIAL_PDFS.length > 0) {
+      handleLoadPDF(INITIAL_PDFS[0]);
+    }
     
-    // Load some cached notes from localStorage if they exist
+    // Carica note salvate in localStorage
     const cachedNotes = localStorage.getItem("lingua_read_study_notes");
     if (cachedNotes) {
       setStudyNotes(cachedNotes);
@@ -91,7 +90,7 @@ export default function App() {
     }
   }, []);
 
-  // Update Notes and local cache
+  // Aggiorna le note e salva nel localStorage
   const handleNotesChange = (text: string) => {
     setStudyNotes(text);
     const count = text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
@@ -99,8 +98,8 @@ export default function App() {
     localStorage.setItem("lingua_read_study_notes", text);
   };
 
-  // Convert PDF file upload to server
-  const handleLocalFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Caricamento PDF locale interamente client-side via Blob URL
+  const handleLocalFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -111,72 +110,52 @@ export default function App() {
 
     try {
       setUploadingPdf(true);
-      showToast(`Salvataggio di "${file.name}" in corso...`);
+      showToast(`Aggiunta del file "${file.name}"...`);
 
-      // Read file to base64
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64String = (reader.result as string).split(",")[1];
-        
-        const response = await fetch("/api/pdfs/upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: file.name,
-            base64: base64String,
-          }),
-        });
-
-        const data = await response.json();
-        if (response.ok && data.success) {
-          showToast(`File "${file.name}" importato localmente con successo!`);
-          
-          // Re-fetch PDF list
-          const updatedRes = await fetch("/api/pdfs");
-          const updatedList: PDFAttachment[] = await updatedRes.json();
-          setPdfs(updatedList);
-          
-          // Find the imported PDF and auto-select it
-          const newlyAdded = updatedList.find(p => p.name === data.name);
-          if (newlyAdded) {
-            handleLoadPDF(newlyAdded);
-          }
-        } else {
-          throw new Error(data.error || "Impossibile caricare il file nel server");
-        }
+      // Creazione di un object URL client-side istantaneo e sicuro dal file selezionato
+      const objectUrl = URL.createObjectURL(file);
+      
+      const newPdf: PDFAttachment = {
+        name: file.name,
+        size: file.size,
+        url: objectUrl,
+        isCustom: true
       };
 
-      reader.onerror = () => {
-        throw new Error("Errore durante la lettura locale del file.");
-      };
+      setPdfs(prev => [newPdf, ...prev]);
+      setActivePdf(newPdf);
+      setCurrentPage(1);
+      setExtractedLines([]);
+      
+      setTimeout(() => {
+        handleLoadPDF(newPdf);
+        showToast("PDF aggiunto con successo alla sessione locale!");
+      }, 300);
 
-      reader.readAsDataURL(file);
     } catch (error: any) {
       console.error(error);
-      showToast(error.message || "Errore nel caricamento del file.", true);
+      showToast("Errore nel caricamento del file.", true);
     } finally {
       setUploadingPdf(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  // Delete PDF from current folder
-  const handleDeletePdf = async (e: React.MouseEvent, pdfName: string) => {
-    e.stopPropagation(); // prevent loading
-    if (!confirm(`Sei sicuro di voler eliminare definitivamente "${pdfName}" dalla cartella locale dell'applicazione?`)) {
+  // Eliminazione client-side di un PDF dalla sessione corrente
+  const handleDeletePdf = (e: React.MouseEvent, pdfName: string) => {
+    e.stopPropagation(); // prevent load
+    if (!confirm(`Vuoi rimuovere il file "${pdfName}" dalla sessione corrente dell'applicazione?`)) {
       return;
     }
 
-    try {
-      const res = await fetch(`/api/pdfs/${encodeURIComponent(pdfName)}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast(`File "${pdfName}" rimosso con successo.`);
-        
-        // If active PDF is the deleted one, clear it
-        if (activePdf?.name === pdfName) {
+    setPdfs(prev => {
+      const filtered = prev.filter(p => p.name !== pdfName);
+      
+      // Se il PDF attivo è quello appena rimosso, azzera la vista
+      if (activePdf?.name === pdfName) {
+        if (filtered.length > 0) {
+          setTimeout(() => handleLoadPDF(filtered[0]), 100);
+        } else {
           setActivePdf(null);
           setTotalPages(0);
           setExtractedLines([]);
@@ -185,19 +164,16 @@ export default function App() {
             ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
           }
         }
-        
-        fetchPdfs();
-      } else {
-        throw new Error(data.error || "Ripristino cartella fallito");
       }
-    } catch (err: any) {
-      console.error(err);
-      showToast(err.message || "Impossibile eliminare il file.", true);
-    }
+      return filtered;
+    });
+
+    showToast("PDF rimosso dalla sessione corrente.");
   };
 
-  // Render and load selected PDF via global pdfjsLib
+  // Render e caricamento PDF tramite pdfjsLib
   const pdfDocRef = useRef<any>(null);
+  const renderTaskRef = useRef<any>(null);
 
   const handleLoadPDF = async (pdfItem: PDFAttachment) => {
     if (!window.hasOwnProperty("pdfjsLib")) {
@@ -221,7 +197,7 @@ export default function App() {
       await renderPdfPage(pdfDoc, 1);
     } catch (error: any) {
       console.error("Error loading PDF document:", error);
-      showToast("Impossibile caricare il PDF desiderato.", true);
+      showToast("Impossibile leggere il PDF. Assicurati che il file non sia corrotto.", true);
     } finally {
       setLoadingPdf(false);
     }
@@ -229,6 +205,16 @@ export default function App() {
 
   const renderPdfPage = async (pdfDoc: any, pageNumber: number) => {
     if (!pdfDoc || !canvasRef.current) return;
+
+    // Cancella l'operazione di rendering precedente se attiva
+    if (renderTaskRef.current) {
+      try {
+        renderTaskRef.current.cancel();
+      } catch (err) {
+        console.warn("Error cancelling previous render task:", err);
+      }
+      renderTaskRef.current = null;
+    }
 
     try {
       setExtractingText(true);
@@ -249,10 +235,14 @@ export default function App() {
           viewport: viewport,
         };
         
-        await page.render(renderContext).promise;
+        const renderTask = page.render(renderContext);
+        renderTaskRef.current = renderTask;
+        
+        await renderTask.promise;
+        renderTaskRef.current = null;
       }
 
-      // Extract text content of current page for easy study help
+      // Estrazione del testo della pagina per facilitare la copia e l'inserimento
       const textContent = await page.getTextContent();
       const lines: string[] = [];
       let tempLine = "";
@@ -273,12 +263,17 @@ export default function App() {
       }
 
       if (lines.length === 0) {
-        lines.push("Questo PDF sembra non contenere testo estraibile (potrebbe trattarsi di una scansione priva di OCR).");
+        lines.push("Nessun testo estraibile rilevato (potrebbe trattarsi di un file o un'immagine digitalizzata senza OCR).");
       }
 
       setExtractedLines(lines);
-    } catch (error) {
-      console.error("Error rendering PDF page:", error);
+    } catch (error: any) {
+      // Ignora l'errore di annullamento del rendering
+      if (error && error.name === "RenderingCancelledException") {
+        console.log("Rendering cancelled cycle.");
+      } else {
+        console.error("Error rendering PDF page:", error);
+      }
     } finally {
       setExtractingText(false);
     }
@@ -295,11 +290,11 @@ export default function App() {
     }
   };
 
-  // Note helpers
+  // Integrazione facilitata per gli appunti
   const appendlineToNotes = (line: string) => {
     const formatted = studyNotes ? `${studyNotes}\n- ${line}` : `- ${line}`;
     handleNotesChange(formatted);
-    showToast("Riga copiata ed inserita nel Blocco Note!");
+    showToast("Riga copiata e inserita nel Blocco Note!");
   };
 
   const copyLineToClipboard = (line: string) => {
@@ -414,22 +409,10 @@ export default function App() {
         <aside className="w-full lg:w-60 border-r border-slate-200 bg-white p-4.5 flex flex-col shrink-0 lg:overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Cartella Locale</p>
-            <button 
-              onClick={() => fetchPdfs(false)} 
-              title="Aggiorna Lista" 
-              className="text-slate-400 hover:text-indigo-600 p-1 rounded-md hover:bg-slate-100 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
           </div>
 
           {/* List of PDFs */}
-          {loadingPdfsList && pdfs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 space-y-2">
-              <RefreshCw className="w-6 h-6 animate-spin text-slate-300" />
-              <p className="text-xs text-slate-400">Verifica file locali...</p>
-            </div>
-          ) : pdfs.length === 0 ? (
+          {pdfs.length === 0 ? (
             <div className="border border-dashed border-slate-200 rounded-xl p-5 text-center bg-slate-50/50">
               <FileCheck className="w-8 h-8 text-slate-300 mx-auto mb-2" />
               <p className="text-xs font-medium text-slate-600">Nessun file</p>
@@ -461,7 +444,7 @@ export default function App() {
 
                     <button
                       onClick={(e) => handleDeletePdf(e, pdf.name)}
-                      title="Elimina"
+                      title="Rimuovi"
                       className="opacity-40 hover:opacity-100 text-slate-400 hover:text-red-500 p-1 rounded hover:bg-slate-100 transition-all shrink-0 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -477,19 +460,19 @@ export default function App() {
             <div className="bg-indigo-50 p-3.5 rounded-lg border border-indigo-100/50">
               <p className="text-xs text-indigo-700 font-bold mb-1">TIP DI STUDIO</p>
               <p className="text-xs text-indigo-900 leading-relaxed">
-                Traduci direttamente dal PDF, scrivi le note a lato e compila il blocco note velocemente.
+                Traduci e leggi direttamente dal PDF, clicca sui testi emersi in basso per ricopiarli e scriverli velocemente nel grande Blocco Note di studio.
               </p>
             </div>
           </div>
         </aside>
 
-        {/* Side-by-side workspace for Desktop, vertical stacked for mobile */}
+        {/* Side-by-side workspace for Desktop (flex-row), vertical stacked for mobile (flex-col) */}
         <main className="flex-1 flex flex-col md:flex-row gap-6 p-6 overflow-y-auto lg:overflow-hidden min-h-0 bg-[#F1F5F9] min-w-0">
           
           {/* LEFT SIDE: PDF Viewer Page Card */}
           <section className="flex-1 flex flex-col h-[650px] md:h-full bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm min-w-0">
             {/* Toolbar Header of PDF */}
-            <div className="bg-slate-50 border-b border-slide-200/50 px-4 py-3 flex items-center justify-between shrink-0">
+            <div className="bg-slate-50 border-b border-slate-200/50 px-4 py-3 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 overflow-hidden mr-4">
                 <FileText className="w-4 h-4 text-indigo-550 shrink-0" />
                 <span className="text-sm font-semibold truncate text-slate-800">
@@ -548,7 +531,7 @@ export default function App() {
               />
             </div>
 
-            {/* Expansible Extracted text lines from current page (Interactive dictionary/copy tool) */}
+            {/* Expansible Extracted text lines from current page */}
             {activePdf && (
               <div className="h-44 bg-slate-50 flex flex-col overflow-hidden shrink-0">
                 <div className="bg-slate-150 border-b border-slate-200 px-4 py-2 flex items-center justify-between shrink-0">
@@ -601,15 +584,15 @@ export default function App() {
             )}
           </section>
 
-          {/* RIGHT SIDE: HUGE Lined Notebook Study Notes Sheet */}
-          <section className="flex-1 flex flex-col h-[650px] md:h-full bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm min-w-0">
+          {/* RIGHT SIDE: HUGE Lined Notebook Study Notes Sheet (Large on Mobile with min-h-[650px] otherwise flex-1 full on desktop) */}
+          <section className="flex-1 flex flex-col min-h-[650px] md:min-h-0 md:h-full bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm min-w-0">
             {/* Header / Titles of Notes Area */}
-            <div className="p-4 flex items-center justify-between border-b border-slate-200 bg-slate-55 shrink-0">
+            <div className="p-4 flex items-center justify-between border-b border-slate-200 bg-slate-50 shrink-0">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-widest font-display">
                   Area Studio / Appunti
                 </span>
-                <span className="text-[10px] bg-slate-100 text-slate-500 font-semibold px-2 py-0.5 rounded-full font-mono">
+                <span className="text-[10px] bg-indigo-50 text-indigo-650 font-semibold px-2.5 py-0.5 rounded-full font-mono">
                   {noteWords} parole
                 </span>
               </div>
@@ -651,7 +634,7 @@ export default function App() {
               <textarea
                 value={studyNotes}
                 onChange={(e) => handleNotesChange(e.target.value)}
-                placeholder="Traduci direttamente dal PDF e scrivi qui i vocaboli, verbi e le tue regole di studio. Puoi fare clic sul tasto (+) delle righe rilevate a sinistra per estrarle velocemente ed incollarle direttamente qui!"
+                placeholder="Fai clic sul tasto (+) in corrispondenza del testo rilevato in basso a sinistra per inserirlo all'istante o digita liberamente regole, grammatica e coniugazioni."
                 className="w-full h-full p-6 pl-12 text-[14px] leading-[28px] focus:outline-none notebook-paper text-slate-700 font-sans resize-none z-0"
               />
             </div>
